@@ -12,7 +12,7 @@ setup(
     name='singer-target-postgres',
     url='https://github.com/datamill-co/target-postgres',
     author='datamill',
-    version="0.1.8",
+    version="0.1.11",
     description='Singer.io target for loading data into postgres',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -20,18 +20,19 @@ setup(
     py_modules=['target_postgres'],
     install_requires=[
         'arrow==0.13.0',
-        'psycopg2==2.7.7',
-        'psycopg2-binary==2.7.7',
-        'singer-python==5.6.0'
+        'psycopg2==2.8.2',
+        'psycopg2-binary==2.8.2',
+        'singer-python==5.6.1'
     ],
     setup_requires=[
         "pytest-runner"
     ],
-    tests_require=[
-        "chance==0.110",
-        "Faker==1.0.7",
-        "pytest==4.5.0"
-    ],
+    extras_require={
+        'tests': [
+            "chance==0.110",
+            "Faker==1.0.7",
+            "pytest==4.5.0"
+        ]},
     entry_points='''
       [console_scripts]
       target-postgres=target_postgres:cli

@@ -22,7 +22,7 @@ from target_postgres import denest
 from target_postgres import json_schema
 
 SEPARATOR = '__'
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 
 def _duration_millis(start):
@@ -89,30 +89,27 @@ class SQLInterface:
         """
         raise NotImplementedError('`` not implemented.')
 
-    def get_table_schema(self, connection, path, name):
+    def get_table_schema(self, connection, name):
         """
         Fetch the `table_schema` for `name`.
 
         :param connection: remote connection, type left to be determined by implementing class
-        :param path: (string, ...)
         :param name: string
         :return: TABLE_SCHEMA(remote)
         """
         raise NotImplementedError('`get_table_schema` not implemented.')
 
-    def _get_table_schema(self, connection, path, name):
+    def _get_table_schema(self, connection, name):
         """
         get_table_schema, but with checking the version of the schema to ensure latest format.
 
         :param connection: remote connection, type left to be determined by implementing class
-        :param path: (string, ...)
         :param name: string
         :return: TABLE_SCHEMA(remote)
         """
-        remote_schema = self.get_table_schema(connection, path, name)
+        remote_schema = self.get_table_schema(connection, name)
         if remote_schema and remote_schema.get('schema_version', 0) != CURRENT_SCHEMA_VERSION:
-            raise Exception('Schema for `{}` (`{}`) is of version {}. Expected version {}'.format(
-                path,
+            raise Exception('Schema for `{}` is of version {}. Expected version {}'.format(
                 name,
                 remote_schema.get('schema_version', 0),
                 CURRENT_SCHEMA_VERSION
@@ -172,14 +169,15 @@ class SQLInterface:
             return from_type__to_name[(path, json_schema.shorthand(schema))]
 
         raw_canonicalized_column_name = self.canonicalize_identifier(SEPARATOR.join(path))
-        canonicalized_column_name = raw_canonicalized_column_name[:self.IDENTIFIER_FIELD_LENGTH]
+        canonicalized_column_name = self.canonicalize_identifier(raw_canonicalized_column_name[:self.IDENTIFIER_FIELD_LENGTH])
 
         raw_suffix = ''
         ## NO TYPE MATCH
         if path in existing_paths:
             raw_suffix = SEPARATOR + json_schema.shorthand(schema)
-            canonicalized_column_name = raw_canonicalized_column_name[
-                                        :self.IDENTIFIER_FIELD_LENGTH - len(raw_suffix)] + raw_suffix
+            canonicalized_column_name = self.canonicalize_identifier(
+                                          raw_canonicalized_column_name[
+                                            :self.IDENTIFIER_FIELD_LENGTH - len(raw_suffix)] + raw_suffix)
 
             self.LOGGER.warning(
                 'FIELD COLLISION: Field `{}` exists in remote already. No compatible type found. Appending type suffix: `{}`'.format(
@@ -198,17 +196,19 @@ class SQLInterface:
 
             i += 1
             suffix = raw_suffix + SEPARATOR + str(i)
-            canonicalized_column_name = raw_canonicalized_column_name[
-                                        :self.IDENTIFIER_FIELD_LENGTH - len(suffix)] + suffix
+            canonicalized_column_name = self.canonicalize_identifier(
+                                          raw_canonicalized_column_name[
+                                            :self.IDENTIFIER_FIELD_LENGTH - len(suffix)] + suffix)
 
         return canonicalized_column_name
 
-    def add_table(self, connection, schema, metadata):
+    def add_table(self, connection, path, name, metadata):
         """
         Create the remote table schema.
 
         :param connection: remote connection, type left to be determined by implementing class
-        :param schema: TABLE_SCHEMA(local) definition for table to be created
+        :param path: (String, ...)
+        :param name: String
         :param metadata: additional metadata needed by implementing class
         :return: None
         """
@@ -231,18 +231,17 @@ class SQLInterface:
         :param table_mappings:
         :return: (boolean, string)
         """
-        from_to = dict([(tuple(mapping['from']), mapping['to']) for mapping in table_mappings])
 
         ## MAPPING EXISTS
-        if from_path in from_to:
-            return {'exists': True, 'to': from_to[from_path]}
+        if from_path in table_mappings:
+            return {'exists': True, 'to': table_mappings[from_path]}
 
-        to_from = dict([(v, k) for k, v in from_to.items()])
+        to_from = dict([(v, k) for k, v in table_mappings.items()])
 
         name = SEPARATOR.join(from_path)
 
         raw_canonicalized_name = self.canonicalize_identifier(name)
-        canonicalized_name = raw_canonicalized_name[:self.IDENTIFIER_FIELD_LENGTH]
+        canonicalized_name = self.canonicalize_identifier(raw_canonicalized_name[:self.IDENTIFIER_FIELD_LENGTH])
 
         i = 0
         ## NAME COLLISION
@@ -255,8 +254,8 @@ class SQLInterface:
 
             i += 1
             suffix = SEPARATOR + str(i)
-            canonicalized_name = raw_canonicalized_name[
-                                 :self.IDENTIFIER_FIELD_LENGTH - len(suffix)] + suffix
+            canonicalized_name = self.canonicalize_identifier(raw_canonicalized_name[
+                                   :self.IDENTIFIER_FIELD_LENGTH - len(suffix)] + suffix)
 
         return {'exists': False, 'to': canonicalized_name}
 
@@ -383,11 +382,11 @@ class SQLInterface:
 
             self._set_metrics_tags__table(timer, table_name)
 
-            existing_schema = self._get_table_schema(connection, table_path, table_name)
+            existing_schema = self._get_table_schema(connection, table_name)
 
             if existing_schema is None:
-                self.add_table(connection, table_name, _metadata)
-                existing_schema = self._get_table_schema(connection, table_path, table_name)
+                self.add_table(connection, table_path, table_name, _metadata)
+                existing_schema = self._get_table_schema(connection, table_name)
 
             self.add_key_properties(connection, table_name, schema.get('key_properties', None))
 
@@ -619,7 +618,7 @@ class SQLInterface:
 
                 log_message(upsert_table_helper__column)
 
-            return self._get_table_schema(connection, table_path, table_name)
+            return self._get_table_schema(connection, table_name)
 
     def _serialize_table_record_field_name(self, remote_schema, streamed_schema, path, value_json_schema):
         """
